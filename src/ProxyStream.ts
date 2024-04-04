@@ -25,8 +25,6 @@ export class ProxyStream<A> extends MulticastSource<A>
     if (shouldRunSource) {
       this.running = true
       this._disposable = this._source.run(this as Sink<A>, scheduler)
-
-      //return this._disposable
     }
 
     return new ProxyDisposable(this, sink)
