@@ -1,26 +1,32 @@
 import { Disposable, Scheduler, Sink, Stream, Time } from '@most/types'
 import { MulticastSource, never } from '@most/core'
+import { disposeNone } from '@most/disposable'
 
-export class ProxyStream<A> extends MulticastSource<A> {
+export class ProxyStream<A> extends MulticastSource<A>
+  implements Stream<A>, Disposable, Sink<A> {
   public attached: boolean = false
   public running: boolean = false
   public scheduler: Scheduler
+  private sinkCount: number = 0
+  private _source?: Stream<A>
+  private _disposable?: Disposable
 
   constructor() {
     super(never())
+    this._disposable = disposeNone()
   }
 
   public run(sink: Sink<A>, scheduler: Scheduler): Disposable {
     this.scheduler = scheduler
     this.add(sink)
 
-    const shouldRun = this.attached && !this.running
+    const shouldRunSource = this.attached && !this.running
 
-    if (shouldRun) {
+    if (shouldRunSource) {
       this.running = true
-      this.disposable = this.source.run(this, scheduler)
+      this._disposable = this._source.run(this as Sink<A>, scheduler)
 
-      return this.disposable
+      //return this._disposable
     }
 
     return new ProxyDisposable(this, sink)
@@ -30,13 +36,16 @@ export class ProxyStream<A> extends MulticastSource<A> {
     if (this.attached) throw new Error('Can only attach 1 stream')
 
     this.attached = true
-    this.source = stream
+    this._source = stream
 
-    const hasMoreSinks = this.sinks.length > 0
+    const shouldRunSource = this.sinkCount > 0
 
-    if (hasMoreSinks) this.disposable = stream.run(this, this.scheduler)
+    if (shouldRunSource) {
+      this.running = true
+      this._disposable = this._source.run(this as Sink<A>, this.scheduler)
+    }
 
-    return stream
+    return this._source
   }
 
   public error(time: Time, error: Error): void {
@@ -55,28 +64,45 @@ export class ProxyStream<A> extends MulticastSource<A> {
     this.attached = false
     this.running = false
   }
+
+  add(sink: Sink<A>): number {
+    this.sinkCount = super.add(sink)
+    return this.sinkCount
+  }
+
+  remove(sink: Sink<A>): number {
+    this.sinkCount = super.remove(sink)
+    return this.sinkCount
+  }
+
+  dispose(): void {
+    super.dispose()
+    const disposable = this._disposable
+    this._disposable = disposeNone()
+    return disposable.dispose()
+  }
 }
 
 class ProxyDisposable<A> implements Disposable {
-  private source: ProxyStream<A>
+  private proxyStream: ProxyStream<A>
   private sink: Sink<A>
   private disposed: boolean
 
   constructor(source: ProxyStream<A>, sink: Sink<A>) {
-    this.source = source
+    this.proxyStream = source
     this.sink = sink
     this.disposed = false
   }
 
-  public dispose() {
+  public dispose(): void {
     if (this.disposed) return
 
-    const { source, sink } = this
+    const { proxyStream, sink } = this
 
     this.disposed = true
-    const remainingSinks = source.remove(sink)
-    const hasNoMoreSinks = remainingSinks === 0
-
-    return hasNoMoreSinks && source.dispose()
+    const remainingSinks = proxyStream.remove(sink)
+    if (remainingSinks === 0) {
+      proxyStream.dispose()
+    }
   }
 }

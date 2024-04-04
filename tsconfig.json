@@ -10,7 +10,8 @@
     "noImplicitAny": true,
     "sourceMap": true,
     "noUnusedParameters": true,
-    "noUnusedLocals": true
+    "noUnusedLocals": true,
+    "types": []
   },
   "include": [
     "src/**/*.ts"

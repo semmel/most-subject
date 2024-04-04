@@ -2,13 +2,12 @@ import { Scheduler, Stream } from '@most/types'
 import { Test, describe, given, it } from '@typed/test'
 import {
   at,
+  continueWith,
   delay,
-  map,
   mergeArray,
   runEffects,
-  startWith,
-  take,
   tap,
+  throwError,
 } from '@most/core'
 
 import { attach } from './attach'
@@ -17,49 +16,93 @@ import { newDefaultScheduler } from '@most/scheduler'
 
 export const test: Test = describe(`attach`, [
   given(`Sink<A> and Stream<A>`, [
-    it(`creates a circular dependency`, ({ equal }) => {
+    it(`attaches a Stream via Sink as source to the already subscribed-to 'create' Stream`, ({
+      equal,
+    }) => {
       const expected = [0, 1, 2]
 
       const scheduler = newDefaultScheduler()
       const [sink, sut] = create<number>()
-      const stream = mergeArray<number>(expected.map(x => at(x, x)))
+      const stream = mergeArray<Stream<number>[]>(expected.map(x => at(x, x)))
 
       const promise = collectEvents(scheduler, sut)
 
+      // stream 0 1 2 -> sut 0 1 2
       attach(sink, stream)
 
       return promise.then(equal(expected))
     }),
 
-    it(`does not have a memory leak`, ({ notOk }, done) => {
-      const scheduler = newDefaultScheduler()
-      const [sink, stream] = create<number>()
+    it('the already subscribed-to source ends with the error of the attached origin', ({
+      equal,
+      notOk,
+    }) => {
+      const scheduler = newDefaultScheduler(),
+        [sinkStream, stream] = create<number>(),
+        sampleError = new Error('sample error'),
+        origin = continueWith(() => throwError(sampleError), at(10, 5)),
+        outcome = runEffects(tap(equal(5), stream), scheduler).then(
+          () => notOk(true),
+          equal(sampleError)
+        )
 
-      function makeAssertions(currentValue: number) {
-        if (currentValue === 8) Promise.resolve(void 0).then(done)
+      attach(sinkStream, origin)
 
-        notOk(currentValue > 8)
-      }
-
-      const origin = map(x => x * 2, startWith(1, tap(makeAssertions, stream)))
-
-      runEffects(take(3, attach(sink, delay(10, origin))), scheduler)
+      return outcome
     }),
 
-    it(`allows reattaching after completion`, ({ ok }) => {
+    it(`attaches a Stream via Sink as source to the 'create' Stream which is subscribed to afterwards`, ({
+      equal,
+    }) => {
+      const expected = [0, 1, 2]
+
       const scheduler = newDefaultScheduler()
-      const [sink, stream] = create<number>()
+      const [sink, sut] = create<number>()
+      const stream = mergeArray<Stream<number>[]>(expected.map(x => at(x, x)))
 
-      const drain = <A>(stream: Stream<A>) => runEffects(stream, scheduler)
+      // stream 0 1 2 -> sut 0 1 2
+      attach(sink, stream)
 
-      const origin = mergeArray<number>([0, 1, 2].map(x => at(x, x)))
+      return collectEvents(scheduler, sut).then(equal(expected))
+    }),
+
+    it('ends with the error of the attached origin', ({ equal, notOk }) => {
+      const scheduler = newDefaultScheduler(),
+        [sinkStream, stream] = create<number>(),
+        sampleError = new Error('sample error'),
+        origin = continueWith(() => throwError(sampleError), at(10, 5))
+
+      attach(sinkStream, origin)
+
+      return runEffects(tap(equal(5), stream), scheduler).then(
+        () => notOk(true),
+        equal(sampleError)
+      )
+    }),
+
+    it(`allows reattaching after completion`, ({ equal }) => {
+      const scheduler = newDefaultScheduler(),
+        // Stream a -> Promise a[]
+        drain: <A>(s: Stream<A>) => Promise<A[]> = collectEvents.bind(
+          undefined,
+          scheduler
+        ),
+        [sink, stream] = create<number>(),
+        // 10 - 11 - 12|
+        origin = mergeArray<Stream<number>[]>([10, 11, 12].map(x => at(x, x)))
 
       attach(sink, origin)
 
-      return drain(stream)
-        .then(() => attach(sink, origin))
+      return drain(delay(100, stream))
+        .then(xs => new Promise<number[]>(res => setTimeout(res, 100, xs)))
+        .then(events => {
+          equal([10, 11, 12])(events)
+          attach(sink, origin)
+          return stream
+        })
+        .then(s => new Promise<Stream<number>>(res => setTimeout(res, 100, s)))
         .then(drain)
-        .then(() => ok(true))
+        .then(equal([10, 11, 12]))
     }),
   ]),
 ])

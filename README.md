@@ -2,6 +2,29 @@
 
 Subjects for [`@most/core`](https://github.com/mostjs/core)
 
+It provides a subjected `Stream` into which you can inject events, an error or the end imperatively. You can also imperatively assign another `Stream` as source, so that it's events, error or end are "handed over" to the subjected `Stream`.
+
+### Example
+
+```javascript
+const
+  { attach, create, event } = require('most-subject'),
+  { periodic, runEffects, scan, take, tap } = require('@most/core'),
+  { currentTime, newDefaultScheduler } = require('@most/scheduler'),
+  scheduler = newDefaultScheduler(),
+  [attachSink, subjStream] = create();
+
+// write subjStream to console
+runEffects(tap(console.log, subjStream), scheduler);
+
+event(currentTime(scheduler), 99, attachSink); // console: 99
+
+// 1 - 2 - 3 - 4 - 5 - …
+const origin = scan(x => x + 1, 1, periodic(50));
+
+attach(attachSink, take(4, origin)); // console: 1 2 3 4
+```
+
 ## Get it
 ```sh
 yarn add most-subject
@@ -14,7 +37,7 @@ npm install --save most-subject
 #### create\<A\>(): Subject\<A, A\>
 #### create\<A, B\>(f: (stream: Stream\<A\>) =\> Stream\<B\>): Subject\<A, B\>
 
-Returns an tuple containing a `AttachSink` and a `Stream`. `AttachSink` can be
+Returns a tuple containing a `AttachSink` and a `Stream`. `AttachSink` can be
 used to imperatively control the events flowing through the `Stream` or
 declaratively using `attach`. Optionally, a function can be applied to the Stream, 
 and the return value of that function will be returned as the second tuple value.
